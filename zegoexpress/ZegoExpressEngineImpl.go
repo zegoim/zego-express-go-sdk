@@ -21,6 +21,7 @@ extern void GoOnApiCalledResult(int, char*, char*);
 extern void GoLoginResultCallback(int, char*, int);
 extern void GoLogoutResultCallback(int, char*, int);
 extern void GoOnIMSendBroadcastMessageResult(zego_error, unsigned long long msg_id, int);
+extern void GoOnPublisherUpdateStreamExtraInfoResult(zego_error, int);
 extern void GoOnPlayerAudioData(unsigned char *, unsigned int, struct zego_audio_frame_param, char *);
 extern void GoOnProcessRemoteAudioData(unsigned char *, unsigned int, struct zego_audio_frame_param *, char *, double);
 extern void GoOnDebugError(int error_code, char* func_name, char* info);
@@ -28,6 +29,7 @@ extern void GoOnRoomStateUpdate(char *room_id, enum zego_room_state state, zego_
 extern void GoOnRoomUserUpdate(char *room_id, enum zego_update_type update_type, struct zego_user *user_list, unsigned int user_count);
 extern void GoOnRoomOnlineUserCountUpdate(char *room_id, int count);
 extern void GoOnRoomStreamUpdate(char *room_id, enum zego_update_type update_type, struct zego_stream *stream_info_list, unsigned int stream_info_count, char *extended_data);
+extern void GoOnRoomStreamExtraInfoUpdate(char *room_id, struct zego_stream *stream_info_list, unsigned int stream_info_count);
 extern void GoOnRoomStateChanged(char *room_id, enum zego_room_state_changed_reason reason, zego_error error_code, char *extended_data);
 extern void GoOnRoomTokenWillExpire(char *room_id, int remain_time_in_second);
 extern void GoOnPublisherStateUpdate(char *stream_id, enum zego_publisher_state state, zego_error error_code, char *extend_data);
@@ -67,6 +69,10 @@ static void bridge_go_on_im_send_broadcast_message_result(const char *room_id, u
     GoOnIMSendBroadcastMessageResult(error_code, message_id, seq);
 }
 
+static void bridge_go_on_publisher_update_stream_extra_info_result(zego_error error_code, zego_seq seq, void *user_context) {
+    GoOnPublisherUpdateStreamExtraInfoResult(error_code, seq);
+}
+
 static void bridge_go_on_player_audio_data(const unsigned char *data, unsigned int data_length, struct zego_audio_frame_param param, const char *stream_id, void *user_context) {
     GoOnPlayerAudioData((unsigned char *)data, data_length, param, (char *)stream_id);
 }
@@ -93,6 +99,10 @@ static void bridge_go_on_room_online_user_count_update(const char *room_id, int 
 
 static void bridge_go_on_room_stream_update(const char *room_id, enum zego_update_type update_type, const struct zego_stream *stream_info_list, unsigned int stream_info_count, const char *extended_data, void *user_context) {
     GoOnRoomStreamUpdate((char *)room_id, update_type, (struct zego_stream *)stream_info_list, stream_info_count, (char *)extended_data);
+}
+
+static void bridge_go_on_room_stream_extra_info_update(const char *room_id, const struct zego_stream *stream_info_list, unsigned int stream_info_count, void *user_context) {
+    GoOnRoomStreamExtraInfoUpdate((char *)room_id, (struct zego_stream *)stream_info_list, stream_info_count);
 }
 
 static void bridge_go_on_room_state_changed(const char *room_id, enum zego_room_state_changed_reason reason, zego_error error_code, const char *extended_data, void *user_context) {
@@ -184,6 +194,7 @@ static void zego_express_go_bridge_init() {
     zego_register_room_login_result_callback(bridge_go_login_callback, NULL);
     zego_register_room_logout_result_callback(bridge_go_logout_callback, NULL);
     zego_register_im_send_broadcast_message_result_callback(bridge_go_on_im_send_broadcast_message_result, NULL);
+    zego_register_publisher_update_stream_extra_info_result_callback(bridge_go_on_publisher_update_stream_extra_info_result, NULL);
     zego_register_player_audio_data_callback(bridge_go_on_player_audio_data, NULL);
     zego_register_process_remote_audio_data_callback(bridge_go_on_process_remote_audio_data, NULL);
     zego_register_debug_error_callback(bridge_go_on_debug_error, NULL);
@@ -191,6 +202,7 @@ static void zego_express_go_bridge_init() {
     zego_register_room_user_update_callback(bridge_go_on_user_update, NULL);
     zego_register_room_online_user_count_update_callback(bridge_go_on_room_online_user_count_update, NULL);
     zego_register_room_stream_update_callback(bridge_go_on_room_stream_update, NULL);
+    zego_register_room_stream_extra_info_update_callback(bridge_go_on_room_stream_extra_info_update, NULL);
     zego_register_room_state_changed_callback(bridge_go_on_room_state_changed, NULL);
     zego_register_room_token_will_expire_callback(bridge_go_on_room_token_will_expire, NULL);
     zego_register_publisher_state_update_callback(bridge_go_on_publisher_state_update, NULL);
@@ -252,6 +264,7 @@ var (
 	roomLoginCallback              = make(map[int]ZegoRoomLoginCallback)
 	roomLogoutCallback             = make(map[int]ZegoRoomLogoutCallback)
 	imSendBroadcastMessageCallback = make(map[int]ZegoIMSendBroadcastMessageCallback)
+	setStreamExtraInfoCallback     = make(map[int]ZegoPublisherSetStreamExtraInfoCallback)
 
 	mediaPlayerLock    sync.Mutex
 	mediaPlayerImplMap = make(map[int]*mediaPlayerImpl)
@@ -336,6 +349,26 @@ func GoOnIMSendBroadcastMessageResult(errorCode C.zego_error, messageID C.ulongl
 		}
 
 		delete(imSendBroadcastMessageCallback, int(seq))
+	}
+	gCallbackHandler.dispatchInCallbackGoroutine(callbackFunc)
+}
+
+//export GoOnPublisherUpdateStreamExtraInfoResult
+func GoOnPublisherUpdateStreamExtraInfoResult(errorCode C.zego_error, seq C.zego_seq) {
+	callbackFunc := func() {
+		callbackLock.Lock()
+		defer callbackLock.Unlock()
+
+		callback, ok := setStreamExtraInfoCallback[int(seq)]
+		if !ok {
+			return
+		}
+
+		if callback != nil {
+			callback(int(errorCode))
+		}
+
+		delete(setStreamExtraInfoCallback, int(seq))
 	}
 	gCallbackHandler.dispatchInCallbackGoroutine(callbackFunc)
 }
@@ -471,6 +504,30 @@ func GoOnRoomStreamUpdate(roomID *C.char, updateType C.enum_zego_update_type, st
 			return
 		}
 		handler.OnRoomStreamUpdate(goRoomID, ZegoUpdateType(updateType), streamList, goData)
+	}
+	gCallbackHandler.dispatchInCallbackGoroutine(callbackFunc)
+}
+
+//export GoOnRoomStreamExtraInfoUpdate
+func GoOnRoomStreamExtraInfoUpdate(roomID *C.char, streamInfoList *C.struct_zego_stream, streamInfoCount C.uint) {
+	goRoomID := C.GoString(roomID)
+	streamList := make([]ZegoStream, 0)
+	if streamInfoList != nil && streamInfoCount > 0 {
+		cStreams := unsafe.Slice(streamInfoList, streamInfoCount)
+
+		for i := 0; i < int(streamInfoCount); i++ {
+			stream := cStreams[i]
+			streamList = append(streamList, convertStream(stream))
+		}
+	}
+	callbackFunc := func() {
+		handlerLock.RLock()
+		defer handlerLock.RUnlock()
+		handler := eventHandler
+		if handler == nil {
+			return
+		}
+		handler.OnRoomStreamExtraInfoUpdate(goRoomID, streamList)
 	}
 	gCallbackHandler.dispatchInCallbackGoroutine(callbackFunc)
 }
@@ -874,7 +931,6 @@ func (e *engineImpl) init(profile ZegoEngineProfile, handler IZegoEventHandler) 
 	handlerLock.Unlock()
 
 	engineConfig := ZegoEngineConfig{
-		LogConfig: nil,
 		AdvancedConfig: map[string]string{
 			"thirdparty_framework_info": "golang",
 		},
@@ -1000,6 +1056,20 @@ func (e *engineImpl) StartPublishingStream(streamID string, config ZegoPublisher
 
 func (e *engineImpl) StopPublishingStream(channel ZegoPublishChannel) {
 	C.zego_express_stop_publishing_stream(C.enum_zego_publish_channel(channel))
+}
+
+func (e *engineImpl) SetStreamExtraInfo(extraInfo string, callback ZegoPublisherSetStreamExtraInfoCallback, channel ZegoPublishChannel) {
+	var seq C.int
+
+	cExtraInfo := StringToCString(extraInfo)
+	defer FreeCString(cExtraInfo)
+
+	C.zego_express_set_stream_extra_info(cExtraInfo, C.enum_zego_publish_channel(channel), &seq)
+	if callback != nil {
+		callbackLock.Lock()
+		defer callbackLock.Unlock()
+		setStreamExtraInfoCallback[int(seq)] = callback
+	}
 }
 
 func (e *engineImpl) SetAudioConfig(config ZegoAudioConfig, channel ZegoPublishChannel) {
@@ -1299,21 +1369,8 @@ func destroyEngine(engine IZegoExpressEngine, callback ZegoDestroyCompletionCall
 	}
 }
 
-func getEngine() IZegoExpressEngine {
-	engineLock.RLock()
-	defer engineLock.RUnlock()
-	return globalEngine
-}
-
 func setEngineConfig(config ZegoEngineConfig) {
 	cEngineConfig := C.struct_zego_engine_config{}
-	cLogConfig := C.struct_zego_log_config{}
-	if config.LogConfig != nil {
-		cLogConfig.log_size = C.ulonglong(config.LogConfig.LogSize)
-		cLogConfig.log_count = C.uint(config.LogConfig.LogCount)
-		setCharArray(&cLogConfig.log_path[0], config.LogConfig.LogPath, C.ZEGO_EXPRESS_MAX_COMMON_LEN)
-		cEngineConfig.log_config = &cLogConfig
-	}
 	if config.AdvancedConfig != nil {
 		var advancedConfig string
 		for key, value := range config.AdvancedConfig {
@@ -1429,13 +1486,13 @@ func (h *callbackHandler) processLoop() {
 	}
 }
 
-func (h *callbackHandler) dispatchInCallbackGoroutine(callbackFunc func()){
+func (h *callbackHandler) dispatchInCallbackGoroutine(callbackFunc func()) {
 	if h.callbackChan == nil {
 		return
 	}
 	select {
 	case h.callbackChan <- callbackFunc:
-		return;
+		return
 	default:
 		callbackLock.Lock()
 		defer callbackLock.Unlock()
