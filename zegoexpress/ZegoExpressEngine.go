@@ -159,6 +159,23 @@ const (
 	ZegoCapabilityNegotiationTypePublisher
 )
 
+// Supported httpDNS service types.
+type ZegoHttpDNSType int
+
+const (
+	// None.
+	ZegoHttpDNSTypeNone ZegoHttpDNSType = iota
+
+	// wangsu httpdns.
+	ZegoHttpDNSTypeWangsu
+
+	// tencent httpdns.
+	ZegoHttpDNSTypeTencent
+
+	// aliyun httpdns.
+	ZegoHttpDNSTypeAliyun
+)
+
 // Update type.
 type ZegoUpdateType int
 
@@ -357,6 +374,23 @@ const (
 	ZegoStreamEventPlayEnd
 )
 
+// Stream Resource Mode
+type ZegoStreamResourceMode int
+
+const (
+	// Default mode. The SDK will automatically select the streaming resource according to the cdnConfig parameters set by the player config and the ready-made background configuration.
+	ZegoStreamResourceModeDefault ZegoStreamResourceMode = iota
+
+	// Playing stream only from CDN.
+	ZegoStreamResourceModeOnlyCDN
+
+	// Playing stream only from L3.
+	ZegoStreamResourceModeOnlyL3
+
+	// Playing stream only from RTC.
+	ZegoStreamResourceModeOnlyRTC
+)
+
 // Playing stream status.
 type ZegoPlayerState int
 
@@ -413,7 +447,7 @@ const (
 // Profile for create engine
 //
 // Profile for create engine
-type ZegoEngineProfile struct {
+type ZegoMultiEngineProfile struct {
 	// Application ID issued by ZEGO for developers, please apply from the ZEGO Admin Console https://console.zegocloud.com The value ranges from 0 to 4294967295.
 	AppID uint32
 
@@ -422,12 +456,9 @@ type ZegoEngineProfile struct {
 
 	// The room scenario. the SDK will optimize the audio and video configuration for the specified scenario to achieve the best effect in this scenario. After specifying the scenario, you can call other APIs to adjusting the audio and video configuration. Differences between scenarios and how to choose a suitable scenario, please refer to https://docs.zegocloud.com/article/14940
 	Scenario ZegoScenario
-}
 
-// Advanced engine configuration.
-type ZegoEngineConfig struct {
-	// @deprecated This property has been deprecated since version 2.3.0, please use the [setLogConfig] function instead.
-	LogConfig *ZegoLogConfig
+	// Room mode. Description: Used to set the room mode. Use cases: If you need to enter multiple rooms at the same time for publish-play stream, please turn on the multi-room mode through this interface. Required: True. Default value: ZEGO_ROOM_MODE_SINGLE_ROOM.
+	RoomMode ZegoRoomMode
 
 	// Other special function switches, if not set, no special function will be used by default. Please contact ZEGO technical support before use.
 	AdvancedConfig map[string]string
@@ -526,6 +557,46 @@ type ZegoPublisherConfig struct {
 	StreamTitle string
 }
 
+// CDN config object.
+//
+// Includes CDN URL and authentication parameter string
+type ZegoCDNConfig struct {
+	// CDN URL
+	Url string
+
+	// Auth param of URL. Please contact ZEGO technical support if you need to use it, otherwise this parameter can be ignored (set to null or empty string).
+	AuthParam string
+
+	// URL supported protocols, candidate values are "tcp" and "quic". If there are more than one, separate them with English commas and try them in order. Please contact ZEGO technical support if you need to use it, otherwise this parameter can be ignored (set to null or empty string).
+	Protocol string
+
+	// QUIC version。 If [protocol] has the QUIC protocol, this information needs to be filled in. If there are multiple version numbers, separate them with commas. Please contact ZEGO technical support if you need to use it, otherwise this parameter can be ignored (set to null or empty string).
+	QuicVersion string
+
+	// customized httpdns service. This feature is only supported for playing stream currently.
+	Httpdns ZegoHttpDNSType
+
+	// QUIC establishes link mode. If the value is 1, quic 0 rtt is used preferentially to establish link. Otherwise, the link is established normally. If [protocol] has the QUIC protocol, this value takes effect.
+	QuicConnectMode int
+
+	// custom param of URL. Please contact ZEGO technical support if you need to use it, otherwise this parameter can be ignored (set to null or empty string).
+	CustomParam string
+}
+
+// Advanced player configuration.
+//
+// Configure stream resource mode, CDN configuration and other advanced configurations.
+type ZegoPlayerConfig struct {
+	// Stream resource mode.
+	ResourceMode ZegoStreamResourceMode
+
+	// The CDN configuration for playing stream. If set, the stream is play according to the URL instead of the streamID. After that, the streamID is only used as the ID of SDK internal callback.
+	CdnConfig *ZegoCDNConfig
+
+	// The Room ID. It only needs to be filled in the multi-room mode, which indicates which room this stream needs to be bound to. This parameter is ignored in single room mode.
+	RoomID string
+}
+
 // Audio configuration.
 //
 // Configure audio bitrate, audio channel, audio encoding for publishing stream
@@ -555,6 +626,20 @@ type ZegoAudioFrameParam struct {
 
 	// Audio channel, default is Mono
 	Channel ZegoAudioChannel
+}
+
+// Customize the audio processing configuration object.
+//
+// Including custom audio acquisition type, sampling rate, channel number, sampling number and other parameters
+type ZegoCustomAudioProcessConfig struct {
+	// Sampling rate, the sampling rate of the input data expected by the audio pre-processing module in App. If 0, the default is the SDK internal sampling rate.
+	SampleRate ZegoAudioSampleRate
+
+	// Number of sound channels, the expected number of sound channels for input data of the audio pre-processing module in App. If 0, the default is the number of internal channels in the SDK
+	Channel ZegoAudioChannel
+
+	// The number of samples required to encode a frame; if samples = 0, the SDK will use the internal sample number, and the SDK will pass the audio data to the external pre-processing module. If the samples! = 0 (the effective value of samples is between [160, 2048]), and the SDK will send audio data to the external preprocessing module that sets the length of sample number.
+	Samples int
 }
 
 // Published stream quality information.
@@ -775,6 +860,36 @@ type IZegoEventHandler interface {
 	// @param extendedData Extended Information with state updates. When the room login is successful, the key "room_session_id" can be used to obtain the unique RoomSessionID of each audio and video communication, which identifies the continuous communication from the first user in the room to the end of the audio and video communication. It can be used in scenarios such as call quality scoring and call problem diagnosis.
 	OnRoomStateUpdate(roomID string, state ZegoRoomState, errorCode int, extendedData string)
 
+	// The callback triggered when the number of other users in the room increases or decreases.
+	//
+	// Available since: 1.1.0
+	// Description: When other users in the room are online or offline, which causes the user list in the room to change, the developer will be notified through this callback.
+	// Use cases: Developers can use this callback to update the user list display in the room in real time.
+	// When to trigger:
+	//   1. When the user logs in to the room for the first time, if there are other users in the room, the SDK will trigger a callback notification with `updateType` being [ZegoUpdateTypeAdd], and `userList` is the other users in the room at this time.
+	//   2. The user is already in the room. If another user logs in to the room through the [loginRoom] or [switchRoom] functions, the SDK will trigger a callback notification with `updateType` being [ZegoUpdateTypeAdd].
+	//   3. If other users log out of this room through the [logoutRoom] or [switchRoom] functions, the SDK will trigger a callback notification with `updateType` being [ZegoUpdateTypeDelete].
+	//   4. The user is already in the room. If another user is kicked out of the room from the server, the SDK will trigger a callback notification with `updateType` being [ZegoUpdateTypeDelete].
+	// Restrictions: If developers need to use ZEGO room users notifications, please ensure that the [ZegoRoomConfig] sent by each user when logging in to the room has the [isUserStatusNotify] property set to true, otherwise the callback notification will not be received.
+	// Related APIs: [loginRoom]、[logoutRoom]、[switchRoom]
+	//
+	// @param roomID Room ID where the user is logged in, a string of up to 128 bytes in length.
+	// @param updateType Update type (add/delete).
+	// @param userList List of users changed in the current room.
+	OnRoomUserUpdate(roomID string, updateType ZegoUpdateType, userList []ZegoUser)
+
+	// The callback triggered every 30 seconds to report the current number of online users.
+	//
+	// Available since: 1.7.0
+	// Description: This method will notify the user of the current number of online users in the room.
+	// Use cases: Developers can use this callback to show the number of user online in the current room.
+	// When to call /Trigger: After successfully logging in to the room.
+	// Restrictions: None.
+	// Caution: 1. This function is called back every 30 seconds. 2. Because of this design, when the number of users in the room exceeds 500, there will be some errors in the statistics of the number of online people in the room.
+	//
+	// @param roomID Room ID where the user is logged in, a string of up to 128 bytes in length.
+	OnRoomOnlineUserCountUpdate(roomID string, count int)
+
 	// The callback triggered when the number of streams published by the other users in the same room increases or decreases.
 	//
 	// Available since: 1.1.0
@@ -792,6 +907,20 @@ type IZegoEventHandler interface {
 	// @param streamList Updated stream list.
 	// @param extendedData Extended information with stream updates.When receiving a stream deletion notification, the developer can convert the string into a json object to get the stream_delete_reason field, which is an array of stream deletion reasons, and the stream_delete_reason[].code field may have the following values: 1 (the user actively stops publishing stream) ; 2 (user heartbeat timeout); 3 (user repeated login); 4 (user kicked out); 5 (user disconnected); 6 (removed by the server).
 	OnRoomStreamUpdate(roomID string, updateType ZegoUpdateType, streamList []ZegoStream, extendedData string)
+
+	// The callback triggered when there is an update on the extra information of the streams published by other users in the same room.
+	//
+	// Available since: 1.1.0
+	// Description: All users in the room will be notified by this callback when the extra information of the stream in the room is updated.
+	// Use cases: Users can realize some business functions through the characteristics of stream extra information consistent with stream life cycle.
+	// When to call /Trigger: When a user publishing the stream update the extra information of the stream in the same room, other users in the same room will receive the callback.
+	// Restrictions: None.
+	// Caution: Unlike the stream ID, which cannot be modified during the publishing process, the stream extra information can be updated during the life cycle of the corresponding stream ID.
+	// Related APIs: Users who publish stream can set extra stream information through [setStreamExtraInfo].
+	//
+	// @param roomID Room ID where the user is logged in, a string of up to 128 bytes in length.
+	// @param streamList List of streams that the extra info was updated.
+	OnRoomStreamExtraInfoUpdate(roomID string, streamList []ZegoStream)
 
 	// Notification of the room connection state changes, including specific reasons for state change.
 	//
@@ -938,25 +1067,36 @@ type IZegoAudioDataHandler interface {
 	// Caution: This callback is a high-frequency callback, please do not perform time-consuming operations in this callback.
 	//
 	// @param data Audio data in PCM format.
-	// @param dataLength Length of the data.
 	// @param param Parameters of the audio frame.
 	// @param streamID Corresponding stream ID.
 	OnPlayerAudioData(data []uint8, param ZegoAudioFrameParam, streamID string)
 }
 
-type IZegoApiCalledEventHandler interface {
-	// Method execution result callback
+type IZegoCustomAudioProcessHandler interface {
+	// Custom audio processing remote playing stream PCM audio frame callback.
 	//
-	// Available since: 2.3.0
-	// Description: When the monitoring is turned on through [setApiCalledCallback], the results of the execution of all methods will be called back through this callback.
-	// Trigger: When the developer calls the SDK method, the execution result of the method is called back.
+	// Available: Since 2.13.0
+	// Description: In this callback, you can receive the PCM audio frames of remote playing stream. Developers can modify the audio frame data, as well as the audio channels and sample rate. The timestamp can be used for data synchronization, such as lyrics, etc.
+	// When to trigger: You need to call [enableCustomAudioRemoteProcessing] to enable the function first, and call [startPlayingStream] to trigger this callback function.
 	// Restrictions: None.
-	// Caution: It is recommended to monitor and process this callback in the development and testing phases, and turn off the monitoring of this callback after going online.
+	// Caution: This callback is a high-frequency callback, please do not perform time-consuming operations in this callback.
 	//
-	// @param errorCode Error code, please refer to the error codes document https://docs.zegocloud.com/en/5548.html for details.
-	// @param funcName Function name.
-	// @param info Detailed error information.
-	OnApiCalledResult(errorCode int, funcName string, info string)
+	// @param data Audio data in PCM format.
+	// @param param Parameters of the audio frame.
+	// @param streamID Corresponding stream ID.
+	// @param timestamp The audio frame timestamp, starting from 0 when capture is started, the unit is milliseconds.
+	OnProcessRemoteAudioData(data []uint8, param *ZegoAudioFrameParam, streamID string, timestamp float64)
+}
+
+type IZegoCallbackEventHandler interface {
+	// Notification callback discarded
+	//
+	// Available since: 3.23.0
+	// Description: When the callback production rate consistently exceeds the consumption rate and callback tasks accumulate to a certain level, the SDK will trigger this callback and execute the abandonment of the original callback.
+	// Trigger: The callback triggered when tasks pile up in the callback goroutine and the callback is discarded.
+	// Restrictions: None.
+	// Caution: If this callback is triggered, it is recommended to check whether time-consuming operations are being performed within the callback goroutine and optimize them accordingly.
+	OnCallbackDiscarded()
 }
 
 type IZegoMediaPlayerEventHandler interface {
@@ -1017,7 +1157,6 @@ type IZegoMediaPlayerEventHandler interface {
 	//
 	// @param mediaPlayer Callback player object.
 	// @param data SEI content.
-	// @param dataLength SEI content length.
 	OnMediaPlayerRecvSEI(mediaPlayer IZegoMediaPlayer, data []uint8)
 
 	// The callback triggered when the media player plays the first frame.
@@ -1044,7 +1183,6 @@ type IZegoMediaPlayerAudioHandler interface {
 	//
 	// @param mediaPlayer Callback player object.
 	// @param data Raw data of audio frames.
-	// @param dataLength Data length.
 	// @param param audio frame flip mode.
 	OnAudioFrame(mediaPlayer IZegoMediaPlayer, data []uint8, param ZegoAudioFrameParam)
 }
@@ -1183,7 +1321,22 @@ type ZegoRoomLogoutCallback func(errorCode int, extendedData string)
 // @param messageID ID of this message
 type ZegoIMSendBroadcastMessageCallback func(errorCode int, messageID uint64)
 
+// Callback for setting stream extra information.
+//
+// @param errorCode Error code, please refer to the error codes document https://docs.zegocloud.com/en/5548.html for details.
+type ZegoPublisherSetStreamExtraInfoCallback func(errorCode int)
+
 type IZegoExpressEngine interface {
+	// Set advanced engine configuration.
+	//
+	// Available since: 3.24.0
+	// Description: Used to enable advanced functions.
+	// When to call: Different configurations have different call timing requirements. For details, please consult ZEGO technical support.
+	// Restrictions: Multi-instance SDK for Linux only.
+	//
+	// @param advancedConfig Advanced engine configuration
+	SetEngineConfig(advancedConfig map[string]string)
+
 	// Enable the debug assistant. Note, do not enable this feature in the online version! Use only during development phase!
 	//
 	// Available since: 2.17.0
@@ -1333,6 +1486,19 @@ type IZegoExpressEngine interface {
 	// @param channel Publish stream channel.
 	StopPublishingStream(channel ZegoPublishChannel)
 
+	// Sets the extra information of the stream being published for the specified publish channel.
+	//
+	// Available since: 1.1.0
+	// Description: Use this function to set the extra info of the stream. The stream extra information is an extra information identifier of the stream ID. Unlike the stream ID, which cannot be modified during the publishing process, the stream extra information can be modified midway through the stream corresponding to the stream ID. Developers can synchronize variable content related to stream IDs based on stream additional information.
+	// When to call: After the engine is created [createEngine], Called before and after [startPublishingStream] can both take effect.
+	// Restrictions: None.
+	// Related callbacks: Users can obtain the execution result of the function through [ZegoPublisherSetStreamExtraInfoCallback] callback.
+	//
+	// @param extraInfo Stream extra information, a string of up to 1024 characters.
+	// @param callback Set stream extra information execution result notification.
+	// @param channel Publish stream channel.
+	SetStreamExtraInfo(extraInfo string, callback ZegoPublisherSetStreamExtraInfoCallback, channel ZegoPublishChannel)
+
 	// Sets up the audio configurations for the specified publish channel.
 	//
 	// Available since: 1.3.4
@@ -1359,6 +1525,31 @@ type IZegoExpressEngine interface {
 	// @param enable Whether to enable echo cancellation, true: enable, false: disable
 	EnableAEC(enable bool)
 
+	// Enables or disables automatic gain control (AGC).
+	//
+	// Available since: 1.1.0
+	// Description: After turning on this function, the SDK can automatically adjust the microphone volume to adapt to near and far sound pickups and keep the volume stable.
+	// Use case: When you need to ensure volume stability to improve call quality and user experience, you can turn on this feature.
+	// When to call: It needs to be called after [createEngine].
+	// Caution: Before this function is called, the SDK automatically determines whether to use AGC. Once this function is called, the SDK does not automatically determine whether to use AGC.
+	// Restrictions: None.
+	//
+	// @param enable Whether to enable automatic gain control, true: enable, false: disable
+	EnableAGC(enable bool)
+
+	// Enables or disables active noise suppression (ANS, aka ANC).
+	//
+	// Available since: 1.1.0
+	// Description: Enable the noise suppression can reduce the noise in the audio data and make the human voice clearer.
+	// Use case: When you need to suppress noise to improve call quality and user experience, you can turn on this feature.
+	// When to call: It needs to be called after [createEngine].
+	// Related APIs: This function has a better suppression effect on continuous noise (such as the sound of rain, white noise). If you need to turn on transient noise suppression, please use [enableTransientANS]. And the noise suppression mode can be set by [setANSMode].
+	// Caution: Before this function is called, the SDK automatically determines whether to use ANS. Once this function is called, the SDK does not automatically determine whether to use ANS.
+	// Restrictions: None.
+	//
+	// @param enable Whether to enable noise suppression, true: enable, false: disable
+	EnableANS(enable bool)
+
 	// Enables the custom audio I/O function (for the specified channel), support PCM, AAC format data.
 	//
 	// Available since: 1.10.0
@@ -1383,7 +1574,6 @@ type IZegoExpressEngine interface {
 	// Related APIs: After the pusher sends the SEI, the puller can obtain the SEI content by monitoring the callback of [onPlayerRecvSEI].
 	//
 	// @param data SEI data.
-	// @param dataLength SEI data length.
 	// @param channel Publish stream channel.
 	SendSEI(data []uint8, channel ZegoPublishChannel)
 
@@ -1433,7 +1623,8 @@ type IZegoExpressEngine interface {
 	// @param streamID Stream ID, a string of up to 256 characters.
 	//   Caution:
 	//   Only support numbers, English characters and '-', '_'.
-	StartPlayingStream(streamID string)
+	// @param config Advanced player configuration Room [roomID] in [ZegoPlayerConfig] is the login roomID.
+	StartPlayingStream(streamID string, config *ZegoPlayerConfig)
 
 	// Stops playing a stream.
 	//
@@ -1458,7 +1649,6 @@ type IZegoExpressEngine interface {
 	// Related APIs: Enable the custom audio IO function [enableCustomAudioIO], and start the push stream [startPublishingStream].
 	//
 	// @param data PCM buffer data.
-	// @param dataLength The total length of the buffer data.
 	// @param param The param of this PCM audio frame.
 	// @param channel Publish channel for capturing audio frames.
 	SendCustomAudioCapturePCMData(data []uint8, param ZegoAudioFrameParam, channel ZegoPublishChannel)
@@ -1472,10 +1662,32 @@ type IZegoExpressEngine interface {
 	// Restrictions: None.
 	// Related APIs: Enable the custom audio IO function [enableCustomAudioIO], and start the play stream [startPlayingStream].
 	//
-	// @param data A block of memory for storing audio PCM data that requires user to manage the memory block's lifecycle, the SDK will copy the audio frame rendering data to this memory block.
-	// @param dataLength The length of the audio data to be fetch this time (dataLength = duration * sampleRate * channels * 2(16 bit depth i.e. 2 Btye)).
+	// @param data A block of memory for storing audio PCM data that requires user to manage the memory block's lifecycle, the SDK will copy the audio frame rendering data to this memory block. (dataLength = duration * sampleRate * channels * 2(16 bit depth i.e. 2 Btye)).
 	// @param param Specify the parameters of the fetched audio frame. sampleRate in ZegoAudioFrameParam must assignment
 	FetchCustomAudioRenderPCMData(data []uint8, param ZegoAudioFrameParam)
+
+	// Set up callback handler for custom audio processing.
+	//
+	// Available since: 1.13.0
+	// Description: When the custom audio processing is enabled, the custom audio processing callback is set through this function, and the developer can modify the processed audio frame data in the callback.
+	// Use cases: If the developer wants to implement special functions (such as voice change, bel canto, etc.) through custom processing after the audio data is collected or before the remote audio data is drawn for rendering.
+	// When to call: After creating the engine.
+	// Restrictions: None.
+	//
+	// @param handler Callback handler for custom audio processing.
+	SetCustomAudioProcessHandler(handle IZegoCustomAudioProcessHandler)
+
+	// Enable custom audio processing for SDK playback audio data.
+	//
+	// Available since: 1.13.0
+	// Description: Enable remote streaming custom audio processing, developers can receive remote streaming audio frames through [onProcessPlaybackAudioData], and can modify the audio data.
+	// Use cases: If the developer wants to implement special functions (such as voice change, bel canto, etc.) through custom processing after collecting audio data.
+	// When to call: It needs to be called before [startPublishingStream], [startPlayingStream], [startPreview], [createMediaPlayer], [createAudioEffectPlayer] and [createRealTimeSequentialDataManager] to be effective.
+	// Restrictions: None.
+	//
+	// @param enable Whether to enable custom audio processing for SDK playback audio data.
+	// @param config Custom audio processing configuration.
+	EnableCustomAudioRemoteProcessing(enable bool, config *ZegoCustomAudioProcessConfig)
 
 	// Creates a media player instance.
 	//
@@ -1498,6 +1710,16 @@ type IZegoExpressEngine interface {
 	//
 	// @param mediaPlayer The media player instance object to be destroyed.
 	DestroyMediaPlayer(mediaPlayer IZegoMediaPlayer)
+
+	// Call the experimental API.
+	//
+	// Available since: 2.7.0
+	// Description: ZEGO provides some technical previews or special customization functions in RTC business through this API. If you need to get the use of the function or the details, please consult ZEGO technical support.
+	// When to call: After [createEngine].
+	//
+	// @param params Parameters in the format of a JSON string, please consult ZEGO technical support for details.
+	// @return Returns an argument in the format of a JSON string, please consult ZEGO technical support for details.
+	CallExperimentalAPI(params string) string
 }
 
 // Create ZegoExpressEngine singleton object and initialize SDK.
@@ -1511,7 +1733,7 @@ type IZegoExpressEngine interface {
 // @param profile The basic configuration information is used to create the engine.
 // @param eventHandler Event notification callback. [nullptr] means not receiving any callback notifications.It can also be managed later via [setEventHandler]. If [createEngine] is called repeatedly and the [destroyEngine] function is not called to destroy the engine before the second call, the eventHandler will not be updated.
 // @return engine singleton instance.
-func CreateEngine(profile ZegoEngineProfile, eventHandler IZegoEventHandler) IZegoExpressEngine {
+func CreateEngine(profile ZegoMultiEngineProfile, eventHandler IZegoEventHandler) IZegoExpressEngine {
 	return createEngine(profile, eventHandler)
 }
 
@@ -1534,30 +1756,6 @@ func DestroyEngine(engine IZegoExpressEngine, callback ZegoDestroyCompletionCall
 	destroyEngine(engine, callback)
 }
 
-// Returns the singleton instance of ZegoExpressEngine.
-//
-// Available since: 1.1.0
-// Description: If the engine has not been created or has been destroyed, returns [nullptr].
-// When to call: After creating the engine, before destroying the engine.
-// Restrictions: None.
-//
-// @return Engine singleton instance
-func GetEngine() IZegoExpressEngine {
-	return getEngine()
-}
-
-// Set advanced engine configuration.
-//
-// Available since: 1.1.0
-// Description: Used to enable advanced functions.
-// When to call: Different configurations have different call timing requirements. For details, please consult ZEGO technical support.
-// Restrictions: None.
-//
-// @param config Advanced engine configuration
-func SetEngineConfig(config ZegoEngineConfig) {
-	setEngineConfig(config)
-}
-
 // Set log configuration.
 //
 // Available since: 2.3.0
@@ -1569,19 +1767,6 @@ func SetEngineConfig(config ZegoEngineConfig) {
 // @param config log configuration.
 func SetLogConfig(config ZegoLogConfig) {
 	setLogConfig(config)
-}
-
-// Set room mode.
-//
-// Available since: 2.9.0
-// Description: If you need to use the multi-room feature, please call this function to complete the configuration.
-// When to call: Must be set before calling [createEngine] to take effect, otherwise it will fail.
-// Restrictions: If you need to use the multi-room feature, please contact the instant technical support to configure the server support.
-// Caution: None.
-//
-// @param mode Room mode. Description: Used to set the room mode. Use cases: If you need to enter multiple rooms at the same time for publish-play stream, please turn on the multi-room mode through this interface. Required: True. Default value: ZEGO_ROOM_MODE_SINGLE_ROOM.
-func SetRoomMode(mode ZegoRoomMode) {
-	setRoomMode(mode)
 }
 
 // Gets the SDK's version number.
@@ -1597,15 +1782,14 @@ func GetVersion() string {
 	return getVersion()
 }
 
-// Set method execution result callback.
+// Set callback event handler.
 //
-// Available since: 2.3.0
-// Description: Set the setting of the execution result of the calling method. After setting, you can get the detailed information of the result of each execution of the ZEGO SDK method.
+// Available since: 3.23.0
+// Description: Set callback event handler.
 // When to call: Any time.
 // Restrictions: None.
-// Caution: It is recommended that developers call this interface only when they need to obtain the call results of each interface. For example, when troubleshooting and tracing problems. Developers generally do not need to pay attention to this interface.
 //
-// @param callback Method execution result callback.
-func SetApiCalledCallback(callback IZegoApiCalledEventHandler) {
-	setApiCalledCallback(callback)
+// @param handler Callback event handler.
+func SetCallbackEventHandler(handler IZegoCallbackEventHandler) {
+	setCallbackEventHandler(handler)
 }
